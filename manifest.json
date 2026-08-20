@@ -1,11 +1,11 @@
 {
-  "name": "Skybound Flight 2",
-  "short_name": "Skybound 2",
+  "name": "Skybound Flight 3D",
+  "short_name": "Skybound 3D",
   "start_url": "./index.html",
   "display": "fullscreen",
   "orientation": "landscape",
-  "background_color": "#70b8e8",
-  "theme_color": "#65aee1",
+  "background_color": "#72b9e8",
+  "theme_color": "#69b5e6",
   "icons": [
     {
       "src": "icon.svg",
