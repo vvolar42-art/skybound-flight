@@ -121,33 +121,52 @@ document.getElementById('invert').onclick=()=>{inverted=!inverted;document.getEl
 
 function controls(){
   let sx=input.x,sy=input.y;
+  const dead=.06;
+  const dz=v=>Math.abs(v)<dead?0:Math.sign(v)*(Math.abs(v)-dead)/(1-dead);
+  sx=dz(sx);sy=dz(sy);
+  sx=Math.sign(sx)*Math.abs(sx)**1.35;
+  sy=Math.sign(sy)*Math.abs(sy)**1.25;
   if(inverted)[sx,sy]=[sy,sx];
   return {roll:clamp(sx,-1,1),pitch:clamp(-sy,-1,1)};
 }
 function update(dt){
   if(crashed)return;
-  const c=controls();
-  const throttleTarget=[0,-.05,.18,.31,.44,.57,.69,.82,1][plane.gear];
-  plane.throttle=lerp(plane.throttle,throttleTarget,1-Math.exp(-dt*2.8));
-  const speed=Math.hypot(plane.vx,plane.vy,plane.vz);
-  const stall= speed<35 || plane.y<world.height(plane.x,plane.z)+8;
-  plane.stall=stall;
-  // Lightweight flight dynamics: thrust, lift, drag, gravity and coordinated attitude.
-  const thrust=plane.gear===0?-18:180*plane.throttle;
-  const lift=clamp(speed*speed*.011*(1-Math.abs(plane.pitch)*.55),-180,260);
-  const drag=.0017*speed*speed + Math.max(0,plane.throttle-.75)*20;
-  const ax=Math.sin(plane.yaw)*thrust - plane.vx*drag*.015;
-  const az=Math.cos(plane.yaw)*thrust - plane.vz*drag*.015;
-  plane.vx+=ax*dt; plane.vz+=az*dt;
-  plane.vy+=(lift-9.81*18)*dt;
-  plane.pitch=lerp(plane.pitch,c.pitch*.55,1-Math.exp(-dt*3));
-  plane.roll=lerp(plane.roll,c.roll*.95,1-Math.exp(-dt*4));
-  plane.yaw+=plane.roll*(0.75+speed*.003)*dt;
-  plane.vy+=Math.sin(plane.pitch)*speed*.12*dt;
-  plane.vx*=Math.pow(.995,dt*60);plane.vz*=Math.pow(.995,dt*60);
+  const c=controls(),speed=Math.max(1,Math.hypot(plane.vx,plane.vy,plane.vz));
+  const target=[-.18,0,.17,.30,.43,.56,.68,.82,1][plane.gear];
+  plane.throttle=lerp(plane.throttle,target,1-Math.exp(-dt*3.5));
+
+  const fx=Math.sin(plane.yaw)*Math.cos(plane.pitch);
+  const fz=Math.cos(plane.yaw)*Math.cos(plane.pitch);
+  const verticalRatio=plane.vy/speed;
+  const aoa=plane.pitch-Math.asin(clamp(verticalRatio,-.85,.85));
+  const liftCoeff=clamp(.34+aoa*3.1,-.35,1.65);
+  const lift=.5*1.225*liftCoeff*speed*speed*.55;
+  const drag=.5*1.225*speed*speed*(.018+.055*aoa*aoa+(speed<60?.08:0));
+  const thrust=(plane.gear===0?-20:155*plane.throttle)*(speed<160?1:160/speed);
+
+  plane.vx+=(fx*thrust-plane.vx*drag*.006)*dt;
+  plane.vz+=(fz*thrust-plane.vz*drag*.006)*dt;
+  plane.vy+=(lift/18-9.81)*dt;
+
+  const authority=clamp(speed/95,.25,1.15);
+  plane.roll=lerp(plane.roll,c.roll*.88,1-Math.exp(-dt*4.4*authority));
+  plane.pitch=lerp(plane.pitch,c.pitch*.48,1-Math.exp(-dt*3.5*authority));
+  plane.yaw+=plane.roll*(.42+speed*.0043)*dt;
+
+  plane.vx*=Math.pow(.998,dt*60);
+  plane.vz*=Math.pow(.998,dt*60);
+  plane.vy*=Math.pow(.999,dt*60);
   plane.x+=plane.vx*dt;plane.y+=plane.vy*dt;plane.z+=plane.vz*dt;
+
   const ground=world.height(plane.x,plane.z);
-  if(plane.y<ground+5){plane.y=ground+5;plane.vy=Math.max(0,plane.vy);if(speed<50)crashed=true}
+  plane.stall=speed<48||aoa>.34;
+  if(plane.stall)plane.vy-=7.5*dt;
+  if(plane.y<ground+7){
+    plane.y=ground+7;plane.vy=Math.max(0,plane.vy);
+    if(speed<62)crashed=true;
+  }
+  plane.airspeed=speed;
+  plane.gload=clamp(1+Math.abs(lift/18)/9.81,0,5);
 }
 function project(x,y,z){
   // Camera follows plane; transform world into camera space.
@@ -171,9 +190,9 @@ function drawTerrain(){
   const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#4e9bd5');g.addColorStop(.55,'#a8d8f1');g.addColorStop(1,'#e7f4fb');ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
   // Sun / distant haze.
   ctx.globalAlpha=.55;ctx.fillStyle='#fff4bf';ctx.beginPath();ctx.arc(W*.78,H*.17,34,0,TAU);ctx.fill();ctx.globalAlpha=1;
-  const grid=9, step=180;
+  const grid=10, step=190;
   for(let iz=grid;iz>=1;iz--){
-    const z=iz*step+60;
+    const z=iz*step+70;
     for(let ix=-grid;ix<=grid;ix++){
       const x=plane.x+ix*step;
       const wx=x, wz=plane.z+z;
@@ -244,10 +263,16 @@ function drawLandmarks(){
   }
 }
 function drawPlane(){
-  // Minimal cockpit/aircraft silhouette at bottom center.
-  ctx.save();ctx.translate(W/2,H*.67);ctx.rotate(plane.roll*.5);
-  ctx.fillStyle='#e8eef1';ctx.beginPath();ctx.moveTo(0,-30);ctx.lineTo(10,16);ctx.lineTo(4,13);ctx.lineTo(45,27);ctx.lineTo(49,34);ctx.lineTo(5,25);ctx.lineTo(0,39);ctx.lineTo(-5,25);ctx.lineTo(-49,34);ctx.lineTo(-45,27);ctx.lineTo(-10,16);ctx.closePath();ctx.fill();
-  ctx.fillStyle='#55758a';ctx.beginPath();ctx.ellipse(0,-12,6,11,0,0,TAU);ctx.fill();ctx.restore();
+  // Modelo de avión low-poly más grande y legible.
+  ctx.save();ctx.translate(W/2,H*.68);ctx.rotate(plane.roll*.42);
+  ctx.fillStyle='#203a4c';ctx.beginPath();ctx.ellipse(0,20,15,42,0,0,TAU);ctx.fill();
+  ctx.fillStyle='#e5edf0';ctx.beginPath();ctx.moveTo(-7,-2);ctx.lineTo(-112,30);ctx.lineTo(-106,41);ctx.lineTo(-5,18);ctx.lineTo(5,18);ctx.lineTo(106,41);ctx.lineTo(112,30);ctx.lineTo(7,-2);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#c5d4da';ctx.beginPath();ctx.moveTo(-5,29);ctx.lineTo(-52,48);ctx.lineTo(-46,56);ctx.lineTo(0,43);ctx.lineTo(46,56);ctx.lineTo(52,48);ctx.lineTo(5,29);ctx.closePath();ctx.fill();
+  const pg=ctx.createLinearGradient(-12,-70,12,55);pg.addColorStop(0,'#f8fbfc');pg.addColorStop(.5,'#a9c0cb');pg.addColorStop(1,'#5d7482');ctx.fillStyle=pg;
+  ctx.beginPath();ctx.moveTo(0,-72);ctx.quadraticCurveTo(15,-42,10,10);ctx.lineTo(7,48);ctx.quadraticCurveTo(0,61,-7,48);ctx.lineTo(-10,10);ctx.quadraticCurveTo(-15,-42,0,-72);ctx.fill();
+  ctx.fillStyle='#244b66';ctx.beginPath();ctx.ellipse(0,-43,7,15,0,0,TAU);ctx.fill();
+  ctx.fillStyle='#718996';ctx.beginPath();ctx.ellipse(-37,33,9,16,0,0,TAU);ctx.ellipse(37,33,9,16,0,0,TAU);ctx.fill();
+  ctx.restore();
 }
 function drawHUD(){
   const speed=Math.hypot(plane.vx,plane.vy,plane.vz);
@@ -255,7 +280,7 @@ function drawHUD(){
   document.getElementById('spd').textContent=Math.round(speed*3.6);
   document.getElementById('hdg').textContent=((plane.yaw*180/Math.PI%360+360)%360).toFixed(0);
   document.getElementById('vs').textContent=plane.vy.toFixed(1);
-  document.getElementById('status').innerHTML=crashed?'ATERRIZAJE DURO — recarga para reiniciar':'SKYBOUND FLIGHT<br><span id="gearText">'+gears[plane.gear]+'</span>';
+  document.getElementById('status').innerHTML=crashed?'ATERRIZAJE DURO — doble toque para reiniciar':'SKYBOUND FLIGHT<br><span id="gearText">'+gears[plane.gear]+'</span> · '+(plane.stall?'PÉRDIDA':speed<65?'LENTO':speed>210?'RÁPIDO':'CRUCERO');
   if(crashed)document.getElementById('status').style.background='#7b2727dd';
 }
 function frame(t){
