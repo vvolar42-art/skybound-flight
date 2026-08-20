@@ -110,6 +110,8 @@ function update(dt){
  }
 
  plane.vx*=Math.pow(.999,dt*60);
+ // Numerical safety: never allow velocities to exceed a sane aircraft-speed envelope.
+ const vmax=360; const vv=Math.hypot(plane.vx,plane.vy,plane.vz); if(vv>vmax){const k=vmax/vv;plane.vx*=k;plane.vy*=k;plane.vz*=k;}
  plane.vy*=Math.pow(.9995,dt*60);
  plane.vz*=Math.pow(.999,dt*60);
 
@@ -129,107 +131,115 @@ function update(dt){
  plane.airspeed=speed;
  plane.g=1+Math.abs(lift/18)/9.81;
 }
-function render(){
- const P=perspective(1.03,W/H,.1,6500);
-
- // Stable chase camera: follows the aircraft's heading, but deliberately ignores
- // roll and pitch so the horizon stays calm. Only a tiny smoothing is applied.
- const sy=Math.sin(plane.yaw), cy=Math.cos(plane.yaw);
- const desiredEye=[
-   plane.x-sy*105,
-   plane.y+42,
-   plane.z-cy*105
- ];
- const desiredTarget=[
-   plane.x+sy*120,
-   plane.y+5,
-   plane.z+cy*120
- ];
- if(!render.cam){
-   render.cam={eye:desiredEye.slice(),target:desiredTarget.slice()};
- }else{
-   const k=1-Math.exp(-.9/60);
-   for(let i=0;i<3;i++){
-     render.cam.eye[i]+=(desiredEye[i]-render.cam.eye[i])*k;
-     render.cam.target[i]+=(desiredTarget[i]-render.cam.target[i])*k;
+function terrainMesh(){
+ const P=[],N=[],C=[];
+ const R=16, step=150;
+ // Dense triangular terrain in WORLD coordinates, then rendered in aircraft-local coordinates.
+ // The mesh is rebuilt around the aircraft so large world coordinates never reach WebGL.
+ for(let z=-R;z<R;z++)for(let x=-R;x<R;x++){
+   const pts=[[x*step,z*step],[(x+1)*step,z*step],[x*step,(z+1)*step],[(x+1)*step,(z+1)*step]];
+   const hs=pts.map(q=>height(plane.x+q[0],plane.z+q[1]));
+   const tris=[[0,1,2],[1,3,2]];
+   for(const tr of tris){
+     const a=tr[0],b=tr[1],d=tr[2];
+     const A=[pts[a][0],hs[a]-plane.y,pts[a][1]];
+     const B=[pts[b][0],hs[b]-plane.y,pts[b][1]];
+     const D=[pts[d][0],hs[d]-plane.y,pts[d][1]];
+     const nn=norm(cross(sub(B,A),sub(D,A)));
+     P.push(...A,...B,...D);N.push(...nn,...nn,...nn);
    }
+ }
+ return mesh(P,N);
+}
+let terrain=terrainMesh(), terrainKey='';
+function refreshTerrain(){
+ // Refresh only when the aircraft has crossed a terrain tile, not every frame.
+ const key=Math.floor(plane.x/150)+','+Math.floor(plane.z/150);
+ if(key!==terrainKey){terrainKey=key;terrain=terrainMesh();}
+}
+function render(){
+ const P=perspective(1.02,W/H,.1,5000);
+
+ // Aircraft stays almost fixed on screen. Camera is a calm chase camera,
+ // positioned behind the aircraft and independent from its roll/pitch.
+ const sy=Math.sin(plane.yaw),cy=Math.cos(plane.yaw);
+ const desiredEye=[-sy*88,32,-cy*88];
+ const desiredTarget=[sy*105,4,cy*105];
+ if(!render.cam)render.cam={eye:desiredEye.slice(),target:desiredTarget.slice()};
+ const smooth=1-Math.exp(-3.2/60);
+ for(let i=0;i<3;i++){
+   render.cam.eye[i]+=(desiredEye[i]-render.cam.eye[i])*smooth;
+   render.cam.target[i]+=(desiredTarget[i]-render.cam.target[i])*smooth;
  }
  const V=look(render.cam.eye,render.cam.target,[0,1,0]);
 
  gl.enable(gl.DEPTH_TEST);
- gl.clearColor(.40,.70,.88,1);
+ gl.clearColor(.39,.69,.87,1);
  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
 
- // Dense low-poly / voxel terrain. Nearby tiles are smaller, farther tiles larger,
- // producing a convincing infinite procedural world without an actual infinite mesh.
- const step=180,R=12;
- for(let z=R;z>=-2;z--) for(let x=-R;x<=R;x++){
-   const wx=plane.x+x*step,wz=plane.z+z*step,h=height(wx,wz);
-   const wet=water(wx,wz);
-   const col=wet?[.07,.40,.59]:
-     h>720?[.52,.53,.52]:
-     h>500?[.40,.49,.36]:
-     h>250?[.25,.46,.25]:
-     [.17,.38,.18];
-   draw(box,mat(wx,h-38,wz,step*.505,Math.max(25,h+38),step*.505,0,0,0),col,V,P);
+ // Local-world transform:
+ // X/Z are measured from the aircraft, so when the aircraft moves right,
+ // the ground visibly slides left. Y is relative to aircraft altitude, so
+ // climbing makes the ground move down and descending brings it up.
+ refreshTerrain();
+ draw(terrain,mat(-0,-0,-0,1,1,1,0,0,0),[.26,.45,.25],V,P);
+
+ // Water surface follows the real terrain/world and therefore also moves oppositely.
+ // Large but finite local patches avoid the illusion that the ground is stuck.
+ const waterMesh=render.water;
+ if(!waterMesh){
+   const P2=[],N2=[];
+   const R=24,step=150,y=0;
+   for(let z=-R;z<R;z++)for(let x=-R;x<R;x++){
+     const a=[x*step,y,z*step],b=[(x+1)*step,y,(z+1)*step],d=[(x+1)*step,y,z*step],e=[x*step,y,(z+1)*step];
+     P2.push(...a,...b,...d,...a,...e,...b);N2.push(0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0);
+   }
+   render.water=mesh(P2,N2);
  }
+ draw(render.water,mat(0,-plane.y,0,1,1,1,0,0,0),[.06,.36,.55],V,P);
 
- // Procedural towns, roads and airports: chunky but deliberately polished voxel style.
- const cell=900,cx=Math.floor(plane.x/cell),cz=Math.floor(plane.z/cell);
- for(let gx=cx-4;gx<=cx+4;gx++) for(let gz=cz-4;gz<=cz+4;gz++){
-   const sx=gx*cell+hash(gx,gz)*500-250;
-   const sz=gz*cell+hash(gz,gx)*500-250;
-   const q=hash(gx*13,gz*17);
-   const base=height(sx,sz);
-
-   if(q>.25 && q<.55){
-     // Roads crossing the town.
-     draw(box,mat(sx,base+2,sz,330,3,18,0,0,0),[.18,.19,.20],V,P);
-     draw(box,mat(sx,base+2,sz,18,3,330,0,0,0),[.18,.19,.20],V,P);
-     for(let i=0;i<14;i++){
-       const bx=sx+(hash(i,gx)-.5)*520;
-       const bz=sz+(hash(i,gz)-.5)*520;
-       const by=height(bx,bz);
-       const bw=10+hash(i+8,gx)*16, bh=18+hash(i+3,gz)*70;
-       const roof=hash(i+5,gz)>.5;
-       draw(box,mat(bx,by+bh/2,bz,bw,bh,bw,[0,0,0][0],[0,0,0][0],[0,0,0][0]),
-            roof?[.55,.30,.22]:[.43,.46,.48],V,P);
-       // rooftop block gives buildings a stepped voxel silhouette.
-       if(bh>55) draw(box,mat(bx,by+bh+5,bz,bw*.7,10,bw*.7,0,0,0),[.30,.34,.37],V,P);
+ // Low-poly world objects. Their positions are world-relative to the aircraft.
+ // Draw only a small number to protect mobile GPUs at high speed.
+ const cell=1000,cx=Math.floor(plane.x/cell),cz=Math.floor(plane.z/cell);
+ let count=0;
+ for(let gx=cx-2;gx<=cx+2;gx++)for(let gz=cz-2;gz<=cz+2;gz++){
+   if(count>110)break;
+   const sx=gx*cell+hash(gx,gz)*700-350;
+   const sz=gz*cell+hash(gz,gx)*700-350;
+   const lx=sx-plane.x,lz=sz-plane.z;
+   if(Math.abs(lx)>1900||Math.abs(lz)>1900)continue;
+   const q=hash(gx*13,gz*17),base=height(sx,sz)-plane.y;
+   if(q>.24&&q<.54){
+     // compact city blocks, all relative to aircraft
+     for(let i=0;i<7 && count<110;i++){
+       const bx=sx+(hash(i,gx)-.5)*430,bz=sz+(hash(i,gz)-.5)*430;
+       const by=height(bx,bz)-plane.y,bw=12+hash(i+8,gx)*16,bh=18+hash(i+3,gz)*70;
+       draw(box,mat(bx-plane.x,by+bh/2,bz-plane.z,bw,bh,bw,0,0,0),
+            [.40,.43,.46],V,P);count++;
      }
-   }
-
-   if(q>.56 && q<.72){
-     // Airport: runway + taxiway + terminal.
-     const ay=height(sx,sz)+4;
-     draw(box,mat(sx,ay,sz,420,4,55,0,hash(gz,gx)*Math.PI,0),[.20,.21,.22],V,P);
-     draw(box,mat(sx,ay+2,sz,390,1,5,0,hash(gz,gx)*Math.PI,0),[.82,.82,.70],V,P);
-     draw(box,mat(sx+100,ay+16,sz,70,28,55,0,hash(gz,gx)*Math.PI,0),[.66,.70,.73],V,P);
-   }
-
-   if(q>.75){
-     // Forest cluster.
-     for(let i=0;i<18;i++){
-       const tx=sx+(hash(i,gx)-.5)*560;
-       const tz=sz+(hash(i,gz)-.5)*560;
-       const ty=height(tx,tz);
-       draw(box,mat(tx,ty+14,tz,5,28,5,0,0,0),[.30,.20,.10],V,P);
-       draw(box,mat(tx,ty+39,tz,24+hash(i,3)*10,34+hash(i,4)*14,24+hash(i,5)*10,0,0,0),[.07,.29,.13],V,P);
+   }else if(q>.54&&q<.68){
+     const ay=base+3,ang=hash(gz,gx)*Math.PI;
+     draw(box,mat(lx,ay,lz,350,4,52,0,ang,0),[.19,.20,.21],V,P);count++;
+     draw(box,mat(lx,ay+2,lz,320,1,4,0,ang,0),[.80,.80,.68],V,P);count++;
+   }else if(q>.75){
+     for(let i=0;i<8&&count<110;i++){
+       const tx=sx+(hash(i,gx)-.5)*520,tz=sz+(hash(i,gz)-.5)*520,ty=height(tx,tz)-plane.y;
+       draw(box,mat(tx-plane.x,ty+30,tz-plane.z,28,45,28,0,0,0),[.07,.29,.13],V,P);count++;
      }
    }
  }
 
- // Aircraft: layered low-poly/voxel model with fuselage, nose, wings, tailplane,
- // cockpit and two engines. It remains completely 3D and easy to read on a phone.
+ // One rigid aircraft body: all parts are grouped under the same attitude,
+ // so engines/wings cannot visually drift away from the fuselage.
  const rx=plane.pitch,ry=plane.yaw,rz=plane.roll;
- draw(box,mat(plane.x,plane.y,plane.z,5.5,3.2,30,rx,ry,rz),[.84,.89,.92],V,P);
- draw(box,mat(plane.x,plane.y,plane.z+27,3.2,2.2,9,rx,ry,rz),[.68,.74,.78],V,P);
- draw(box,mat(plane.x,plane.y-1,plane.z-24,5,3,9,rx,ry,rz),[.90,.92,.93],V,P);
- draw(box,mat(plane.x,plane.y,plane.z,38,1.15,9,rx,ry,rz),[.65,.74,.79],V,P);
- draw(box,mat(plane.x,plane.y+4,plane.z-19,16,1.0,6,rx,ry,rz),[.57,.67,.72],V,P);
- draw(box,mat(plane.x,plane.y+3,plane.z-7,9,2.4,8,rx,ry,rz),[.10,.25,.34],V,P);
- draw(box,mat(plane.x-14,plane.y-1.5,plane.z+2,4.2,4,10,rx,ry,rz),[.24,.29,.33],V,P);
- draw(box,mat(plane.x+14,plane.y-1.5,plane.z+2,4.2,4,10,rx,ry,rz),[.24,.29,.33],V,P);
+ draw(box,mat(0,0,0,5.8,3.3,31,rx,ry,rz),[.86,.91,.93],V,P);
+ draw(box,mat(0,0,26,3.5,2.3,10,rx,ry,rz),[.68,.75,.79],V,P);
+ draw(box,mat(0,-.2,-25,5.1,2.8,9,rx,ry,rz),[.91,.93,.94],V,P);
+ draw(box,mat(0,0,0,40,1.2,9.5,rx,ry,rz),[.63,.73,.78],V,P);
+ draw(box,mat(0,4,-19,17,1.0,6,rx,ry,rz),[.58,.68,.73],V,P);
+ draw(box,mat(0,3,-7,9.5,2.4,8,rx,ry,rz),[.08,.23,.32],V,P);
+ draw(box,mat(-14, -1.5,2,4.3,4.1,10.5,rx,ry,rz),[.23,.28,.32],V,P);
+ draw(box,mat(14, -1.5,2,4.3,4.1,10.5,rx,ry,rz),[.23,.28,.32],V,P);
 }
 let last=performance.now();function loop(t){let dt=Math.min(.032,(t-last)/1000);last=t;update(dt);render();let s=plane.airspeed;document.getElementById('alt').textContent=Math.round(plane.y);document.getElementById('spd').textContent=Math.round(s*3.6);document.getElementById('hdg').textContent=((plane.yaw*180/Math.PI%360+360)%360).toFixed(0);document.getElementById('vs').textContent=plane.vy.toFixed(1);document.getElementById('g').textContent=plane.g.toFixed(1);document.getElementById('mode').textContent=plane.crashed?'ATERRIZAJE DURO':plane.stall?'PÉRDIDA':plane.gear===0?'REVERSA':plane.gear===1?'NEUTRAL':s<60?'LENTO':s>210?'RÁPIDO':'CRUCERO';requestAnimationFrame(loop)}requestAnimationFrame(loop);
 if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
