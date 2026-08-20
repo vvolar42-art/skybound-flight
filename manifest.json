@@ -1,0 +1,17 @@
+{
+  "name": "Skybound Flight",
+  "short_name": "Skybound",
+  "start_url": "./index.html",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#79b8e8",
+  "theme_color": "#79b8e8",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

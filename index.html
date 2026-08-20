@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#79b8e8">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Skybound Flight">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<title>Skybound Flight</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#79b8e8;font-family:system-ui,-apple-system,Segoe UI,sans-serif;touch-action:none}
+#game{position:fixed;inset:0;width:100%;height:100%;display:block}
+#hud{position:fixed;inset:0;pointer-events:none;color:#fff;text-shadow:0 2px 4px #0008}
+.panel{background:#102238aa;border:1px solid #ffffff35;border-radius:12px;backdrop-filter:blur(4px);padding:7px 10px;font-size:12px}
+#stats{position:absolute;left:12px;top:max(12px,env(safe-area-inset-top));line-height:1.45}
+#status{position:absolute;left:50%;top:max(12px,env(safe-area-inset-top));transform:translateX(-50%);font-weight:700;text-align:center;min-width:180px}
+#invert{position:absolute;right:12px;top:max(12px,env(safe-area-inset-top));pointer-events:auto;border:0;border-radius:12px;padding:11px 13px;background:#162b44d9;color:white;font-weight:800;box-shadow:0 4px 12px #0005}
+#invert:active{transform:scale(.96)}
+#hint{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);font-size:11px;opacity:.7}
+#joystick{position:absolute;left:max(18px,env(safe-area-inset-left));bottom:max(18px,env(safe-area-inset-bottom));width:150px;height:150px;border-radius:50%;background:#0c1b2d66;border:2px solid #ffffff38;pointer-events:auto}
+#stick{position:absolute;left:50%;top:50%;width:62px;height:62px;margin:-31px;border-radius:50%;background:#d9f0ffbb;border:2px solid #fff;box-shadow:0 4px 12px #0006}
+#lever{position:absolute;right:max(18px,env(safe-area-inset-right));bottom:max(12px,env(safe-area-inset-bottom));width:116px;height:255px;border-radius:18px;background:#0c1b2dcc;border:2px solid #ffffff35;pointer-events:auto;padding:8px}
+#lever .rail{position:absolute;left:50%;top:17px;bottom:17px;width:7px;transform:translateX(-50%);background:#b8d0df55;border-radius:8px}
+#gearKnob{position:absolute;left:50%;width:52px;height:52px;margin-left:-26px;margin-top:-26px;border-radius:50%;background:#f2f7fb;border:3px solid #6f8494;box-shadow:0 5px 10px #0008;display:flex;align-items:center;justify-content:center;color:#102238;font-weight:900;font-size:13px;z-index:2}
+.gearLabels{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:space-between;padding:7px 10px;color:#d9efff;font-weight:800;font-size:11px}
+#gearTouch{position:absolute;inset:0}
+#rotate{position:fixed;inset:0;display:none;background:#071321;color:white;align-items:center;justify-content:center;text-align:center;padding:30px;font-size:20px;font-weight:800;z-index:20}
+@media (orientation:portrait){#rotate{display:flex}}
+@media (max-height:430px){#joystick{width:125px;height:125px}.panel{font-size:10px}#lever{height:225px;width:104px}}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+  <div id="stats" class="panel">ALT <b id="alt">0</b> m<br>VEL <b id="spd">0</b> km/h<br>HDG <b id="hdg">0</b>°<br>V/S <b id="vs">0</b> m/s</div>
+  <div id="status" class="panel">SKYBOUND FLIGHT<br><span id="gearText">N</span></div>
+  <button id="invert">↔ Invertir controles</button>
+  <div id="hint">Joystick: cabeceo/viraje · Palanca: potencia · R/N/1–7</div>
+  <div id="joystick"><div id="stick"></div></div>
+  <div id="lever">
+    <div class="rail"></div>
+    <div id="gearKnob">N</div>
+    <div class="gearLabels"><span>R</span><span>N</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span></div>
+    <div id="gearTouch"></div>
+  </div>
+</div>
+<div id="rotate">Gira el móvil a horizontal para volar ✈️</div>
+
+<script>
+'use strict';
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d',{alpha:false});
+let W=innerWidth,H=innerHeight,DPR=Math.min(devicePixelRatio||1,2);
+function resize(){W=innerWidth;H=innerHeight;DPR=Math.min(devicePixelRatio||1,2);canvas.width=W*DPR;canvas.height=H*DPR;canvas.style.width=W+'px';canvas.style.height=H+'px';ctx.setTransform(DPR,0,0,DPR,0,0)}
+addEventListener('resize',resize);resize();
+
+const TAU=Math.PI*2, clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const lerp=(a,b,t)=>a+(b-a)*t;
+const smooth=t=>t*t*(3-2*t);
+function hash(x,y=0){let n=(Math.imul(x|0,374761393)^Math.imul(y|0,668265263))|0;n=Math.imul(n^(n>>>13),1274126177);return ((n^(n>>>16))>>>0)/4294967296}
+function noise(x,y){const xi=Math.floor(x),yi=Math.floor(y),fx=smooth(x-xi),fy=smooth(y-yi);let a=hash(xi,yi),b=hash(xi+1,yi),c=hash(xi,yi+1),d=hash(xi+1,yi+1);return lerp(lerp(a,b,fx),lerp(c,d,fx),fy)}
+function fbm(x,y){let v=0,a=.5,f=1;for(let i=0;i<5;i++){v+=noise(x*f,y*f)*a;f*=2;a*=.5}return v}
+
+const world={
+  cell:900,
+  height(x,z){
+    const n=fbm(x*.0009,z*.0009);
+    const ridges=Math.pow(Math.abs(noise(x*.0017,z*.0017)*2-1),1.8);
+    return (n-.48)*1250 + ridges*260;
+  },
+  water(x,z){
+    const h=this.height(x,z);
+    const lake=noise(x*.0011+40,z*.0011-20);
+    const river=Math.abs(noise(x*.00045,z*.0022)-.5);
+    return h<35 || lake>.79 || river<.025;
+  },
+  biome(x,z){
+    const n=fbm(x*.00035+80,z*.00035-30);
+    if(this.height(x,z)>600)return 'alpine';
+    if(n<.27)return 'dry';
+    if(n>.68)return 'forest';
+    return 'grass';
+  }
+};
+
+const plane={
+  x:0,y:650,z:0,vx:0,vy:0,vz:92,yaw:0,pitch:0,roll:0,
+  throttle:0,gear:1,stall:false
+};
+let inverted=false, crashed=false, last=performance.now();
+const input={x:0,y:0};
+let dragging=false, joyId=null;
+
+const joy=document.getElementById('joystick'),stick=document.getElementById('stick');
+function setJoy(e){
+  const r=joy.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;
+  let dx=e.clientX-cx,dy=e.clientY-cy,max=r.width*.38,m=Math.hypot(dx,dy);
+  if(m>max){dx*=max/m;dy*=max/m}
+  input.x=dx/max;input.y=dy/max;
+  stick.style.transform=`translate(${dx}px,${dy}px)`;
+}
+function endJoy(){dragging=false;joyId=null;input.x=input.y=0;stick.style.transform='translate(0,0)'}
+joy.addEventListener('pointerdown',e=>{dragging=true;joyId=e.pointerId;joy.setPointerCapture(e.pointerId);setJoy(e)});
+joy.addEventListener('pointermove',e=>{if(dragging&&e.pointerId===joyId)setJoy(e)});
+joy.addEventListener('pointerup',endJoy);joy.addEventListener('pointercancel',endJoy);
+
+const gearKnob=document.getElementById('gearKnob'),lever=document.getElementById('lever');
+const gears=['R','N','1','2','3','4','5','6','7'];
+function setGearFromY(clientY){
+  const r=lever.getBoundingClientRect(),t=clamp((clientY-r.top)/r.height,0,1);
+  const idx=Math.round(t*8);plane.gear=idx;gearKnob.textContent=gears[idx];
+  gearKnob.style.top=(t*100)+'%';document.getElementById('gearText').textContent=gears[idx];
+}
+document.getElementById('gearTouch').addEventListener('pointerdown',e=>{setGearFromY(e.clientY);e.currentTarget.setPointerCapture(e.pointerId)});
+document.getElementById('gearTouch').addEventListener('pointermove',e=>{if(e.buttons)setGearFromY(e.clientY)});
+document.getElementById('invert').onclick=()=>{inverted=!inverted;document.getElementById('invert').textContent=inverted?'↔ Controles invertidos':'↔ Invertir controles'};
+
+function controls(){
+  let sx=input.x,sy=input.y;
+  if(inverted)[sx,sy]=[sy,sx];
+  return {roll:clamp(sx,-1,1),pitch:clamp(-sy,-1,1)};
+}
+function update(dt){
+  if(crashed)return;
+  const c=controls();
+  const throttleTarget=[0,-.05,.18,.31,.44,.57,.69,.82,1][plane.gear];
+  plane.throttle=lerp(plane.throttle,throttleTarget,1-Math.exp(-dt*2.8));
+  const speed=Math.hypot(plane.vx,plane.vy,plane.vz);
+  const stall= speed<35 || plane.y<world.height(plane.x,plane.z)+8;
+  plane.stall=stall;
+  // Lightweight flight dynamics: thrust, lift, drag, gravity and coordinated attitude.
+  const thrust=plane.gear===0?-18:180*plane.throttle;
+  const lift=clamp(speed*speed*.011*(1-Math.abs(plane.pitch)*.55),-180,260);
+  const drag=.0017*speed*speed + Math.max(0,plane.throttle-.75)*20;
+  const ax=Math.sin(plane.yaw)*thrust - plane.vx*drag*.015;
+  const az=Math.cos(plane.yaw)*thrust - plane.vz*drag*.015;
+  plane.vx+=ax*dt; plane.vz+=az*dt;
+  plane.vy+=(lift-9.81*18)*dt;
+  plane.pitch=lerp(plane.pitch,c.pitch*.55,1-Math.exp(-dt*3));
+  plane.roll=lerp(plane.roll,c.roll*.95,1-Math.exp(-dt*4));
+  plane.yaw+=plane.roll*(0.75+speed*.003)*dt;
+  plane.vy+=Math.sin(plane.pitch)*speed*.12*dt;
+  plane.vx*=Math.pow(.995,dt*60);plane.vz*=Math.pow(.995,dt*60);
+  plane.x+=plane.vx*dt;plane.y+=plane.vy*dt;plane.z+=plane.vz*dt;
+  const ground=world.height(plane.x,plane.z);
+  if(plane.y<ground+5){plane.y=ground+5;plane.vy=Math.max(0,plane.vy);if(speed<50)crashed=true}
+}
+function project(x,y,z){
+  // Camera follows plane; transform world into camera space.
+  const dx=x-plane.x,dy=y-plane.y,dz=z-plane.z;
+  const cy=Math.cos(plane.yaw),sy=Math.sin(plane.yaw);
+  let X=dx*cy-dz*sy,Z=dx*sy+dz*cy,Y=dy;
+  const cp=Math.cos(plane.pitch),sp=Math.sin(plane.pitch);
+  let Y2=Y*cp-Z*sp,Z2=Y*sp+Z*cp;
+  const cr=Math.cos(plane.roll),sr=Math.sin(plane.roll);
+  let X2=X*cr-Y2*sr,Y3=X*sr+Y2*cr;
+  const f=Math.min(W,H)*.82, zz=Math.max(15,Z2);
+  return {x:W/2+X2*f/zz,y:H*.53-Y3*f/zz,z:zz};
+}
+function poly(points,fill){ctx.beginPath();points.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.closePath();ctx.fillStyle=fill;ctx.fill()}
+function worldColor(x,z){
+  const b=world.biome(x,z);
+  return b==='forest'?'#2c6638':b==='dry'?'#9a8c55':b==='alpine'?'#777c7a':'#4d8b49';
+}
+function drawTerrain(){
+  // Sky gradient.
+  const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#4e9bd5');g.addColorStop(.55,'#a8d8f1');g.addColorStop(1,'#e7f4fb');ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  // Sun / distant haze.
+  ctx.globalAlpha=.55;ctx.fillStyle='#fff4bf';ctx.beginPath();ctx.arc(W*.78,H*.17,34,0,TAU);ctx.fill();ctx.globalAlpha=1;
+  const grid=9, step=180;
+  for(let iz=grid;iz>=1;iz--){
+    const z=iz*step+60;
+    for(let ix=-grid;ix<=grid;ix++){
+      const x=plane.x+ix*step;
+      const wx=x, wz=plane.z+z;
+      const h=world.height(wx,wz);
+      const p1=project(wx-step/2,h,wz-step/2),p2=project(wx+step/2,h,wz-step/2);
+      const p3=project(wx+step/2,h,wz+step/2),p4=project(wx-step/2,h,wz+step/2);
+      let fill;
+      if(world.water(wx,wz)){
+        const wave=.5+.5*Math.sin((wx+wz+performance.now()*.05)*.015);
+        fill=wave>.55?'#398fb8':'#2f7da7';
+      } else {
+        const c=worldColor(wx,wz),shade=clamp((h+300)/1200,.2,1);
+        fill=c;
+        if(h>500)fill='#777c7b'; if(h>780)fill='#d5e0df';
+      }
+      poly([p1,p2,p3,p4],fill);
+    }
+  }
+  drawLandmarks();
+}
+function roadSegment(x,z,len,ang){
+  const y=world.height(x,z)+4;
+  const a={x:x-Math.cos(ang)*len/2,z:z-Math.sin(ang)*len/2};
+  const b={x:x+Math.cos(ang)*len/2,z:z+Math.sin(ang)*len/2};
+  const p1=project(a.x,y,a.z),p2=project(b.x,y,b.z);
+  ctx.strokeStyle='#42484c';ctx.lineWidth=clamp(1200/(p1.z+p2.z),2,16);
+  ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();
+  ctx.strokeStyle='#d8c46b';ctx.lineWidth=Math.max(1,ctx.lineWidth*.12);
+  ctx.setLineDash([8,10]);ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();ctx.setLineDash([]);
+}
+function tree(x,z,s){
+  const y=world.height(x,z);if(world.water(x,z))return;
+  const p=project(x,y+1,z),r=clamp(1500/(p.z+1)*s,2,24);
+  ctx.fillStyle='#5b3f27';ctx.fillRect(p.x-r*.12,p.y-r*.1,r*.24,r*1.1);
+  ctx.fillStyle='#245d34';ctx.beginPath();ctx.arc(p.x,p.y-r*.35,r*.8,0,TAU);ctx.fill();
+  ctx.fillStyle='#347a42';ctx.beginPath();ctx.arc(p.x-r*.25,p.y-r*.55,r*.52,0,TAU);ctx.fill();
+}
+function airport(x,z,ang){
+  const y=world.height(x,z)+5, L=330,Wd=65;
+  const pts=[project(x-Math.cos(ang)*L/2,y,z-Math.sin(ang)*L/2),project(x+Math.cos(ang)*L/2,y,z+Math.sin(ang)*L/2)];
+  ctx.strokeStyle='#b9bdbe';ctx.lineWidth=clamp(1800/(pts[0].z+pts[1].z),3,20);ctx.beginPath();ctx.moveTo(pts[0].x,pts[0].y);ctx.lineTo(pts[1].x,pts[1].y);ctx.stroke();
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.setLineDash([9,8]);ctx.beginPath();ctx.moveTo(pts[0].x,pts[0].y);ctx.lineTo(pts[1].x,pts[1].y);ctx.stroke();ctx.setLineDash([]);
+}
+function city(x,z){
+  const y=world.height(x,z)+4;
+  for(let i=0;i<18;i++){const a=hash((x|0)+i,(z|0)-i)*TAU,r=hash(i,(x|0))*180;let bx=x+Math.cos(a)*r,bz=z+Math.sin(a)*r;
+    const p=project(bx,y,bz),h=clamp((hash(i+7,(z|0))*80+25)*450/(p.z+50),2,40),w=h*.55;
+    ctx.fillStyle=hash(i,33)>.5?'#b8b4a9':'#7e8b94';ctx.fillRect(p.x-w/2,p.y-h,w,h);
+  }
+}
+function drawCloud(x,z,s){
+  const p=project(x,plane.y+120+noise(x*.002,z*.002)*100,z);if(p.z<0)return;
+  const r=clamp(9000/(p.z+1)*s,12,90);ctx.fillStyle='#fff';ctx.globalAlpha=.72;
+  for(let i=0;i<5;i++){ctx.beginPath();ctx.arc(p.x+(i-2)*r*.35,p.y+Math.sin(i)*r*.08,r*(.55+(i%2)*.18),0,TAU);ctx.fill()}ctx.globalAlpha=1;
+}
+function drawLandmarks(){
+  const cx=Math.floor(plane.x/world.cell),cz=Math.floor(plane.z/world.cell);
+  for(let gx=cx-3;gx<=cx+3;gx++)for(let gz=cz-3;gz<=cz+3;gz++){
+    const sx=gx*world.cell+hash(gx,gz)*700-350,sz=gz*world.cell+hash(gz,gx)*700-350;
+    const q=hash(gx*3,gz*7);
+    if(q>.76)airport(sx,sz,hash(gx+5,gz)*TAU);
+    if(q<.18)city(sx,sz);
+    if(world.biome(sx,sz)==='forest'){
+      for(let i=0;i<7;i++)tree(sx+(hash(i,gx)-.5)*500,sz+(hash(i,gz)-.5)*500,.7+hash(i+9,gz));
+    }
+    if(q>.45&&q<.7)roadSegment(sx,sz,650,hash(gz,gx+2)*TAU);
+    if(q>.30&&q<.37)drawCloud(sx,sz,1+hash(gx,gz)*1.5);
+  }
+}
+function drawPlane(){
+  // Minimal cockpit/aircraft silhouette at bottom center.
+  ctx.save();ctx.translate(W/2,H*.67);ctx.rotate(plane.roll*.5);
+  ctx.fillStyle='#e8eef1';ctx.beginPath();ctx.moveTo(0,-30);ctx.lineTo(10,16);ctx.lineTo(4,13);ctx.lineTo(45,27);ctx.lineTo(49,34);ctx.lineTo(5,25);ctx.lineTo(0,39);ctx.lineTo(-5,25);ctx.lineTo(-49,34);ctx.lineTo(-45,27);ctx.lineTo(-10,16);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#55758a';ctx.beginPath();ctx.ellipse(0,-12,6,11,0,0,TAU);ctx.fill();ctx.restore();
+}
+function drawHUD(){
+  const speed=Math.hypot(plane.vx,plane.vy,plane.vz);
+  document.getElementById('alt').textContent=Math.max(0,Math.round(plane.y));
+  document.getElementById('spd').textContent=Math.round(speed*3.6);
+  document.getElementById('hdg').textContent=((plane.yaw*180/Math.PI%360+360)%360).toFixed(0);
+  document.getElementById('vs').textContent=plane.vy.toFixed(1);
+  document.getElementById('status').innerHTML=crashed?'ATERRIZAJE DURO — recarga para reiniciar':'SKYBOUND FLIGHT<br><span id="gearText">'+gears[plane.gear]+'</span>';
+  if(crashed)document.getElementById('status').style.background='#7b2727dd';
+}
+function frame(t){
+  const dt=Math.min(.033,(t-last)/1000);last=t;
+  update(dt);drawTerrain();drawPlane();drawHUD();requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// Restart by double tapping after a crash.
+addEventListener('dblclick',()=>{if(crashed)location.reload()});
+
+// Basic PWA service-worker registration.
+if('serviceWorker' in navigator) addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+</script>
+</body>
+</html>
