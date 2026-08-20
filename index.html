@@ -21,7 +21,7 @@ button{pointer-events:auto;border:0;color:white;background:#102238dc;border-radi
 @media(orientation:portrait){#rotate{display:flex}}@media(max-height:430px){#joystick{width:135px;height:135px}#lever{height:235px;width:105px}}
 </style></head><body><canvas id="gl"></canvas><div id="hud">
 <div id="stats" class="panel">ALT <b id="alt">0</b> m<br>VEL <b id="spd">0</b> km/h<br>HDG <b id="hdg">0</b>°<br>V/S <b id="vs">0</b> m/s<br>G <b id="g">1.0</b></div>
-<div id="status" class="panel">SKYBOUND 3D<br><span id="gear">1</span> · <span id="mode">CRUCERO</span></div>
+<div id="status" class="panel">SKYBOUND 3D · ☀️<br><span id="gear">1</span> · <span id="mode">CRUCERO</span></div>
 <button id="invert">↔ Invertir</button><button id="pause">Ⅱ</button>
 <div id="joystick"><div id="stick"></div></div>
 <div id="lever"><div id="rail"></div><div id="knob" style="top:25%">1</div><div id="labels"><span>R</span><span>N</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span></div><div id="gearTouch"></div></div></div>
@@ -29,8 +29,10 @@ button{pointer-events:auto;border:0;color:white;background:#102238dc;border-radi
 <script>
 const c=document.getElementById('gl'),gl=c.getContext('webgl',{antialias:true});let W,H;
 function resize(){W=innerWidth;H=innerHeight;c.width=W*devicePixelRatio;c.height=H*devicePixelRatio;gl.viewport(0,0,c.width,c.height)}addEventListener('resize',resize);resize();
-const VS=`attribute vec3 p,n;uniform mat4 M,V,P;varying vec3 N;void main(){vec4 w=M*vec4(p,1.);N=mat3(M)*n;gl_Position=P*V*w;}`;
-const FS=`precision mediump float;uniform vec3 color,sun;varying vec3 N;void main(){float l=.3+.7*max(dot(normalize(N),normalize(sun)),0.);gl_FragColor=vec4(color*l,1.);}`;
+const VS=`attribute vec3 p,n;uniform mat4 M,V,P;varying vec3 N;varying float depthV;
+void main(){vec4 w=M*vec4(p,1.);vec4 v=V*w;N=mat3(M)*n;depthV=-v.z;gl_Position=P*v;}`;
+const FS=`precision mediump float;uniform vec3 color,sun;uniform float fogNear,fogFar;varying vec3 N;varying float depthV;
+void main(){float l=.24+.76*max(dot(normalize(N),normalize(sun)),0.);float f=clamp((depthV-fogNear)/(fogFar-fogNear),0.,1.);vec3 sky=vec3(.39,.69,.87);vec3 c=mix(color*l,sky,f);gl_FragColor=vec4(c,1.);}`;
 function shader(t,s){let x=gl.createShader(t);gl.shaderSource(x,s);gl.compileShader(x);return x}let pr=gl.createProgram();gl.attachShader(pr,shader(gl.VERTEX_SHADER,VS));gl.attachShader(pr,shader(gl.FRAGMENT_SHADER,FS));gl.linkProgram(pr);gl.useProgram(pr);
 const AP=gl.getAttribLocation(pr,'p'),AN=gl.getAttribLocation(pr,'n'),UM=gl.getUniformLocation(pr,'M'),UV=gl.getUniformLocation(pr,'V'),UP=gl.getUniformLocation(pr,'P'),UC=gl.getUniformLocation(pr,'color'),US=gl.getUniformLocation(pr,'sun');
 function perspective(f,a,n,z){let q=1/Math.tan(f/2),r=new Float32Array(16);r[0]=q/a;r[5]=q;r[10]=(z+n)/(n-z);r[11]=-1;r[14]=2*z*n/(n-z);return r}
@@ -39,7 +41,7 @@ function look(e,t,u){let z=norm(sub(e,t)),x=norm(cross(u,z)),y=cross(z,x);return
 function mat(x,y,z,sx,sy,sz,rx,ry,rz){let cx=Math.cos(rx),sxr=Math.sin(rx),cy=Math.cos(ry),syr=Math.sin(ry),cz=Math.cos(rz),szr=Math.sin(rz);let R=new Float32Array([cy*cz,-cy*szr,syr,0,sxr*syr*cz+cx*szr,cx*cz-sxr*syr*szr,-sxr*cy,0,sxr*szr-cx*syr*cz,sxr*cz+cx*syr*szr,cx*cy,0,x,y,z,1]);R[0]*=sx;R[1]*=sx;R[2]*=sx;R[4]*=sy;R[5]*=sy;R[6]*=sy;R[8]*=sz;R[9]*=sz;R[10]*=sz;return R}
 function mesh(P,N){let b=gl.createBuffer(),nb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(P),gl.STATIC_DRAW);gl.bindBuffer(gl.ARRAY_BUFFER,nb);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(N),gl.STATIC_DRAW);return{b,nb,n:P.length/3}}
 function cube(){let P=[],N=[];let F=[[[0,0,1],[-1,-1,1,1,-1,1,1,1,1,-1,1]],[[0,0,-1],[1,-1,-1,-1,-1,-1,-1,1,-1,1,1,-1]],[[1,0,0],[1,-1,1,1,-1,-1,1,1,-1,1,1,1]],[[-1,0,0],[-1,-1,-1,-1,-1,1,-1,1,1,-1,1,-1]],[[0,1,0],[-1,1,1,1,1,1,1,1,-1,-1,1,-1]],[[0,-1,0],[-1,-1,-1,1,-1,-1,1,-1,1,-1,-1,1]]];for(let f of F){for(let k=1;k<3;k++){let q=f[1],i0=0,i1=k,i2=k+1;P.push(q[i0*3],q[i0*3+1],q[i0*3+2],q[i1*3],q[i1*3+1],q[i1*3+2],q[i2*3],q[i2*3+1],q[i2*3+2]);N.push(...f[0],...f[0],...f[0])}}return mesh(P,N)}const box=cube();
-function draw(o,M,col,V,P){gl.bindBuffer(gl.ARRAY_BUFFER,o.b);gl.enableVertexAttribArray(AP);gl.vertexAttribPointer(AP,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ARRAY_BUFFER,o.nb);gl.enableVertexAttribArray(AN);gl.vertexAttribPointer(AN,3,gl.FLOAT,false,0,0);gl.uniformMatrix4fv(UM,false,M);gl.uniformMatrix4fv(UV,false,V);gl.uniformMatrix4fv(UP,false,P);gl.uniform3fv(UC,col);gl.uniform3fv(US,[.4,.8,.6]);gl.drawArrays(gl.TRIANGLES,0,o.n)}
+function draw(o,M,col,V,P){gl.bindBuffer(gl.ARRAY_BUFFER,o.b);gl.enableVertexAttribArray(AP);gl.vertexAttribPointer(AP,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ARRAY_BUFFER,o.nb);gl.enableVertexAttribArray(AN);gl.vertexAttribPointer(AN,3,gl.FLOAT,false,0,0);gl.uniformMatrix4fv(UM,false,M);gl.uniformMatrix4fv(UV,false,V);gl.uniformMatrix4fv(UP,false,P);gl.uniform3fv(UC,col);gl.uniform3fv(US,[.35,.85,.55]);gl.uniform1f(UFN,900);gl.uniform1f(UFF,3000);gl.drawArrays(gl.TRIANGLES,0,o.n)}
 function hash(x,z){let n=(Math.imul(x|0,374761393)^Math.imul(z|0,668265263))|0;n=Math.imul(n^(n>>>13),1274126177);return((n^(n>>>16))>>>0)/4294967296}
 function noise(x,z){let a=Math.floor(x),b=Math.floor(z),u=x-a,v=z-b;u=u*u*(3-2*u);v=v*v*(3-2*v);let h=(x,y)=>hash(x,y);return(h(a,b)*(1-u)+h(a+1,b)*u)*(1-v)+(h(a,b+1)*(1-u)+h(a+1,b+1)*u)*v}
 function height(x,z){return(noise(x*.0008,z*.0008)-.48)*1000+(noise(x*.0025+9,z*.0025-4)-.5)*140}
@@ -131,115 +133,117 @@ function update(dt){
  plane.airspeed=speed;
  plane.g=1+Math.abs(lift/18)/9.81;
 }
+function worldToLocal(wx,wz){
+ const dx=wx-plane.x,dz=wz-plane.z,sy=Math.sin(plane.yaw),cy=Math.cos(plane.yaw);
+ return [dx*cy-dz*sy, dx*sy+dz*cy];
+}
 function terrainMesh(){
- const P=[],N=[],C=[];
- const R=16, step=150;
- // Dense triangular terrain in WORLD coordinates, then rendered in aircraft-local coordinates.
- // The mesh is rebuilt around the aircraft so large world coordinates never reach WebGL.
+ const P=[],N=[],R=24,step=105;
+ // High-density local mesh, regenerated only when the aircraft crosses a tile.
  for(let z=-R;z<R;z++)for(let x=-R;x<R;x++){
-   const pts=[[x*step,z*step],[(x+1)*step,z*step],[x*step,(z+1)*step],[(x+1)*step,(z+1)*step]];
-   const hs=pts.map(q=>height(plane.x+q[0],plane.z+q[1]));
-   const tris=[[0,1,2],[1,3,2]];
-   for(const tr of tris){
-     const a=tr[0],b=tr[1],d=tr[2];
-     const A=[pts[a][0],hs[a]-plane.y,pts[a][1]];
-     const B=[pts[b][0],hs[b]-plane.y,pts[b][1]];
-     const D=[pts[d][0],hs[d]-plane.y,pts[d][1]];
-     const nn=norm(cross(sub(B,A),sub(D,A)));
+   const W=[[x*step,z*step],[(x+1)*step,z*step],[x*step,(z+1)*step],[(x+1)*step,(z+1)*step]];
+   const Q=W.map(q=>{let v=worldToLocal(plane.x+q[0],plane.z+q[1]);return [v[0],height(plane.x+q[0],plane.z+q[1])-plane.y,v[1]]});
+   const T=[[0,1,2],[1,3,2]];
+   for(const t of T){
+     const A=Q[t[0]],B=Q[t[1]],D=Q[t[2]],nn=norm(cross(sub(B,A),sub(D,A)));
      P.push(...A,...B,...D);N.push(...nn,...nn,...nn);
    }
  }
  return mesh(P,N);
 }
-let terrain=terrainMesh(), terrainKey='';
+function waterMesh(){
+ const P=[],N=[],R=24,step=105;
+ // Water is NOT a giant plane anymore. Only actual water cells get triangles.
+ for(let z=-R;z<R;z++)for(let x=-R;x<R;x++){
+   const corners=[[x*step,z*step],[(x+1)*step,z*step],[x*step,(z+1)*step],[(x+1)*step,(z+1)*step]];
+   const ws=corners.map(q=>water(plane.x+q[0],plane.z+q[1]));
+   if(ws.filter(Boolean).length<2)continue;
+   const Q=corners.map(q=>{let v=worldToLocal(plane.x+q[0],plane.z+q[1]);return[v[0],height(plane.x+q[0],plane.z+q[1])-plane.y+2,v[1]]});
+   const A=Q[0],B=Q[1],D=Q[2],E=Q[3];
+   P.push(...A,...B,...D,...A,...E,...B);
+   N.push(0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0);
+ }
+ return mesh(P,N);
+}
+let terrain=terrainMesh(),water=waterMesh(),terrainKey='';
 function refreshTerrain(){
- // Refresh only when the aircraft has crossed a terrain tile, not every frame.
- const key=Math.floor(plane.x/150)+','+Math.floor(plane.z/150);
- if(key!==terrainKey){terrainKey=key;terrain=terrainMesh();}
+ const key=Math.floor(plane.x/105)+','+Math.floor(plane.z/105);
+ if(key!==terrainKey){terrainKey=key;terrain=terrainMesh();water=waterMesh();}
 }
 function render(){
- const P=perspective(1.02,W/H,.1,5000);
+ const P=perspective(1.02,W/H,.1,4500);
+ // Camera is always directly behind and slightly above the aircraft.
+ // It does not follow pitch/roll, only heading, and moves very little.
+ const camEye=[0,11,-78],camTarget=[0,4,115];
+ const V=look(camEye,camTarget,[0,1,0]);
 
- // Aircraft stays almost fixed on screen. Camera is a calm chase camera,
- // positioned behind the aircraft and independent from its roll/pitch.
- const sy=Math.sin(plane.yaw),cy=Math.cos(plane.yaw);
- const desiredEye=[-sy*88,32,-cy*88];
- const desiredTarget=[sy*105,4,cy*105];
- if(!render.cam)render.cam={eye:desiredEye.slice(),target:desiredTarget.slice()};
- const smooth=1-Math.exp(-3.2/60);
- for(let i=0;i<3;i++){
-   render.cam.eye[i]+=(desiredEye[i]-render.cam.eye[i])*smooth;
-   render.cam.target[i]+=(desiredTarget[i]-render.cam.target[i])*smooth;
- }
- const V=look(render.cam.eye,render.cam.target,[0,1,0]);
-
- gl.enable(gl.DEPTH_TEST);
- gl.clearColor(.39,.69,.87,1);
- gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-
- // Local-world transform:
- // X/Z are measured from the aircraft, so when the aircraft moves right,
- // the ground visibly slides left. Y is relative to aircraft altitude, so
- // climbing makes the ground move down and descending brings it up.
+ gl.enable(gl.DEPTH_TEST);gl.disable(gl.CULL_FACE);
+ gl.clearColor(.39,.69,.87,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
  refreshTerrain();
- draw(terrain,mat(-0,-0,-0,1,1,1,0,0,0),[.26,.45,.25],V,P);
 
- // Water surface follows the real terrain/world and therefore also moves oppositely.
- // Large but finite local patches avoid the illusion that the ground is stuck.
- const waterMesh=render.water;
- if(!waterMesh){
-   const P2=[],N2=[];
-   const R=24,step=150,y=0;
-   for(let z=-R;z<R;z++)for(let x=-R;x<R;x++){
-     const a=[x*step,y,z*step],b=[(x+1)*step,y,(z+1)*step],d=[(x+1)*step,y,z*step],e=[x*step,y,(z+1)*step];
-     P2.push(...a,...b,...d,...a,...e,...b);N2.push(0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0);
-   }
-   render.water=mesh(P2,N2);
- }
- draw(render.water,mat(0,-plane.y,0,1,1,1,0,0,0),[.06,.36,.55],V,P);
+ // Ground and water are in aircraft-local coordinates: when the plane moves,
+ // the world moves in the opposite direction. When it climbs/descends, the
+ // ground changes its vertical distance naturally.
+ draw(terrain,mat(0,0,0,1,1,1,0,0,0),[.22,.42,.19],V,P);
+ if(water.n)draw(water,mat(0,0,0,1,1,1,0,0,0),[.035,.28,.48],V,P);
 
- // Low-poly world objects. Their positions are world-relative to the aircraft.
- // Draw only a small number to protect mobile GPUs at high speed.
- const cell=1000,cx=Math.floor(plane.x/cell),cz=Math.floor(plane.z/cell);
+ const cell=850,cx=Math.floor(plane.x/cell),cz=Math.floor(plane.z/cell);
  let count=0;
- for(let gx=cx-2;gx<=cx+2;gx++)for(let gz=cz-2;gz<=cz+2;gz++){
-   if(count>110)break;
-   const sx=gx*cell+hash(gx,gz)*700-350;
-   const sz=gz*cell+hash(gz,gx)*700-350;
-   const lx=sx-plane.x,lz=sz-plane.z;
-   if(Math.abs(lx)>1900||Math.abs(lz)>1900)continue;
-   const q=hash(gx*13,gz*17),base=height(sx,sz)-plane.y;
-   if(q>.24&&q<.54){
-     // compact city blocks, all relative to aircraft
-     for(let i=0;i<7 && count<110;i++){
-       const bx=sx+(hash(i,gx)-.5)*430,bz=sz+(hash(i,gz)-.5)*430;
-       const by=height(bx,bz)-plane.y,bw=12+hash(i+8,gx)*16,bh=18+hash(i+3,gz)*70;
-       draw(box,mat(bx-plane.x,by+bh/2,bz-plane.z,bw,bh,bw,0,0,0),
-            [.40,.43,.46],V,P);count++;
+ for(let gx=cx-3;gx<=cx+3;gx++)for(let gz=cz-3;gz<=cz+3;gz++){
+   if(count>150)break;
+   const sx=gx*cell+hash(gx,gz)*600-300,sz=gz*cell+hash(gz,gx)*600-300;
+   const q=hash(gx*13,gz*17);
+   const loc=worldToLocal(sx,sz);
+   if(Math.abs(loc[0])>1850||Math.abs(loc[1])>1850)continue;
+   const base=height(sx,sz)-plane.y;
+   if(q>.22&&q<.50){
+     // Buildings with a two-stage stepped roof and different widths.
+     for(let i=0;i<9&&count<150;i++){
+       const bx=sx+(hash(i,gx)-.5)*470,bz=sz+(hash(i,gz)-.5)*470;
+       const l=worldToLocal(bx,bz),by=height(bx,bz)-plane.y;
+       const w=11+hash(i+8,gx)*18,h=20+hash(i+3,gz)*85;
+       const col=hash(i+9,gz)>.5?[.48,.49,.50]:[.36,.42,.47];
+       draw(box,mat(l[0],by+h/2,l[1],w,h,w,0,0,0),col,V,P);
+       if(h>55)draw(box,mat(l[0],by+h+5,l[1],w*.72,10,w*.72,0,0,0),[.28,.32,.36],V,P);
+       count++;
      }
-   }else if(q>.54&&q<.68){
-     const ay=base+3,ang=hash(gz,gx)*Math.PI;
-     draw(box,mat(lx,ay,lz,350,4,52,0,ang,0),[.19,.20,.21],V,P);count++;
-     draw(box,mat(lx,ay+2,lz,320,1,4,0,ang,0),[.80,.80,.68],V,P);count++;
-   }else if(q>.75){
-     for(let i=0;i<8&&count<110;i++){
-       const tx=sx+(hash(i,gx)-.5)*520,tz=sz+(hash(i,gz)-.5)*520,ty=height(tx,tz)-plane.y;
-       draw(box,mat(tx-plane.x,ty+30,tz-plane.z,28,45,28,0,0,0),[.07,.29,.13],V,P);count++;
+     // Wide road grid.
+     draw(box,mat(loc[0],base+2,loc[1],380,3,15,0,0,0),[.16,.17,.18],V,P);
+     draw(box,mat(loc[0],base+2,loc[1],15,3,380,0,0,0),[.16,.17,.18],V,P);
+   } else if(q>.50&&q<.66){
+     const ang=hash(gz,gx)*Math.PI,l=worldToLocal(sx,sz),ay=base+3;
+     draw(box,mat(l[0],ay,l[1],390,4,52,0,ang-plane.yaw,0),[.17,.18,.19],V,P);
+     draw(box,mat(l[0],ay+2,l[1],350,1.3,4,0,ang-plane.yaw,0),[.82,.82,.70],V,P);
+     draw(box,mat(l[0]+20,ay+15,l[1],75,25,50,0,ang-plane.yaw,0),[.58,.63,.66],V,P);
+   } else if(q>.72){
+     for(let i=0;i<12&&count<150;i++){
+       const tx=sx+(hash(i,gx)-.5)*540,tz=sz+(hash(i,gz)-.5)*540,ty=height(tx,tz)-plane.y;
+       const l=worldToLocal(tx,tz),r=13+hash(i,3)*10,h=30+hash(i,4)*24;
+       draw(box,mat(l[0],ty+h/2,l[1],r,h,r,0,0,0),[.06,.25,.11],V,P);
+       draw(box,mat(l[0],ty+h+10,l[1],r*1.35,22,r*1.35,0,0,0),[.08,.34,.14],V,P);
+       count++;
      }
    }
  }
+ // Clouds: sparse, static in world coordinates, moving only because the world moves.
+ for(let i=-3;i<=3;i++){
+   const wx=Math.floor(plane.x/1200)*1200+i*1200+hash(i,17)*500;
+   const wz=Math.floor(plane.z/1200)*1200+hash(i,31)*500;
+   const l=worldToLocal(wx,wz),cy=220+hash(i,44)*160;
+   if(Math.abs(l[0])<1700&&Math.abs(l[1])<1700){
+     for(let j=0;j<4;j++)draw(box,mat(l[0]+j*28-40,cy+(hash(j,i)-.5)*15,l[1]+(hash(j+5,i)-.5)*30,55,22,55,0,0,0),[.92,.95,.97],V,P);
+   }
+ }
 
- // One rigid aircraft body: all parts are grouped under the same attitude,
- // so engines/wings cannot visually drift away from the fuselage.
- const rx=plane.pitch,ry=plane.yaw,rz=plane.roll;
- draw(box,mat(0,0,0,5.8,3.3,31,rx,ry,rz),[.86,.91,.93],V,P);
- draw(box,mat(0,0,26,3.5,2.3,10,rx,ry,rz),[.68,.75,.79],V,P);
- draw(box,mat(0,-.2,-25,5.1,2.8,9,rx,ry,rz),[.91,.93,.94],V,P);
- draw(box,mat(0,0,0,40,1.2,9.5,rx,ry,rz),[.63,.73,.78],V,P);
- draw(box,mat(0,4,-19,17,1.0,6,rx,ry,rz),[.58,.68,.73],V,P);
- draw(box,mat(0,3,-7,9.5,2.4,8,rx,ry,rz),[.08,.23,.32],V,P);
- draw(box,mat(-14, -1.5,2,4.3,4.1,10.5,rx,ry,rz),[.23,.28,.32],V,P);
- draw(box,mat(14, -1.5,2,4.3,4.1,10.5,rx,ry,rz),[.23,.28,.32],V,P);
+ // Rigid low-poly aircraft, all components use the exact same attitude.
+ const rx=plane.pitch,ry=0,rz=plane.roll;
+ draw(box,mat(0,0,0,6,3.5,32,rx,ry,rz),[.86,.91,.94],V,P);
+ draw(box,mat(0,0,27,3.6,2.4,10,rx,ry,rz),[.70,.77,.81],V,P);
+ draw(box,mat(0,-.2,-26,5.2,2.8,10,rx,ry,rz),[.92,.94,.95],V,P);
+ draw(box,mat(0,0,0,41,1.2,10,rx,ry,rz),[.61,.72,.78],V,P);
+ draw(box,mat(0,4,-19,17,1.1,6,rx,ry,rz),[.08,.23,.32],V,P);
+ draw(box,mat(-14,-1.5,2,4.5,4.3,11,rx,ry,rz),[.23,.28,.32],V,P);
+ draw(box,mat(14,-1.5,2,4.5,4.3,11,rx,ry,rz),[.23,.28,.32],V,P);
 }
 let last=performance.now();function loop(t){let dt=Math.min(.032,(t-last)/1000);last=t;update(dt);render();let s=plane.airspeed;document.getElementById('alt').textContent=Math.round(plane.y);document.getElementById('spd').textContent=Math.round(s*3.6);document.getElementById('hdg').textContent=((plane.yaw*180/Math.PI%360+360)%360).toFixed(0);document.getElementById('vs').textContent=plane.vy.toFixed(1);document.getElementById('g').textContent=plane.g.toFixed(1);document.getElementById('mode').textContent=plane.crashed?'ATERRIZAJE DURO':plane.stall?'PÉRDIDA':plane.gear===0?'REVERSA':plane.gear===1?'NEUTRAL':s<60?'LENTO':s>210?'RÁPIDO':'CRUCERO';requestAnimationFrame(loop)}requestAnimationFrame(loop);
 if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
